@@ -104,21 +104,36 @@ impl DBFType {
     }
 }
 
+/// Field metadata.
 pub trait FieldMeta {
+    /// A field is nullable
     fn nullable(&self) -> bool;
+    /// A field is auto-increment numeric
     fn autoincrement(&self) -> bool;
+    /// Field name
     fn name(&self) -> &str;
+    /// Offset of byte in each record
     fn rec_offset(&self) -> usize;
+    /// Size in bytes of this field
     fn size(&self) -> usize;
+    /// Precision of float/numeric field
     fn precision(&self) -> usize;
+    /// Next auto incremented id
     fn next_id(&mut self) -> u32;
 }
 
+/// Operation conversion from/to bytes into field
 pub trait FieldOps : FieldMeta + Display {
+    /// Parse bytes based on current meta data and update the state
     fn from_record_bytes(&mut self);
+    /// Return bytes represent by this field.
+    /// The result is a byte slice with length equals to size stored in meta data.
     fn to_bytes(&self) -> &[u8];
 }
 
+/// Record standard operation.
+/// It can be indexed to access each field.
+/// It can be iterated to read each field in this record.
 pub trait RecordOps<T>: 
     Stream<Item=Vec<T>> + 
     Index<usize, Output=Vec<T>>
@@ -127,6 +142,7 @@ where T: FieldOps + FieldMeta
     
 }
 
+/// Standard table operation.
 pub trait TableOps<F> : RecordOps<F> where F: FieldOps + FieldMeta {
     fn join<V>(&self, other: impl TableOps<F>, condition: impl Fn(&[F], &[F]) -> Option<Vec<F>>) -> V where V: TableOps<F>;
     fn select<V>(&self, condition: impl Fn(&[F]) -> Option<Vec<F>>) -> V where V: TableOps<F>;

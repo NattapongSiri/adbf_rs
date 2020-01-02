@@ -180,19 +180,32 @@ pub fn cp_mapper(codepage: u8) -> Result<&'static str, &'static str> {
 }
 
 pub enum FieldType {
+    /// Fixed length character data type
     Character,
+    /// 8 bytes integer divide by 10,000 so it can contains at most 4 digit precisions.
     Currency,
+    /// 8 bytes Date. A day count since 1/1/0001
     Date,
+    /// 8 bytes DateTime. 4 first bytes is date. 4 later bytes is time.
     DateTime,
+    /// IEEE compatible floating point format
     Double,
+    /// Float/Numeric - Store as ASCII text on disk but 8 bytes in memory
     Float,
+    /// OLE Object
     General,
+    /// 32 bit integer
     Integer,
+    /// 1 bytes logical data representation as True/False
     Logical,
+    /// 4 bytes represent an offset inside memo file
     Memo,
+    /// Same as float. Store as ASCII text on disk but 8 bytes in memory.
     Numeric,
     Picture,
+    /// Store variable length binary data
     Varbinary,
+    /// Store variable length character
     Varchar
 }
 
@@ -205,7 +218,7 @@ impl FieldType {
             'T' => Ok(FieldType::DateTime),
             'B' => Ok(FieldType::Double),
             'F' => Ok(FieldType::Float),
-            'G' => Ok(FieldType::General),
+            'G' => Ok(FieldType::General), 
             'I' => Ok(FieldType::Integer),
             'L' => Ok(FieldType::Logical),
             'M' => Ok(FieldType::Memo),
