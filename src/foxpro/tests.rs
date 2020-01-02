@@ -4,10 +4,16 @@ use super::*;
 fn test_create_records() {
     let record = &[
         b'a', b'b', 
-        1u8, 0, 0,   0, 0,   0, 0, 0,
-        2u8, 0, 0,   0, 0,   0, 0, 0,
-          0, 0, 0, 3u8, 0, 8u8, 0, 0];
-    let r = Record {
+         1u8,    0,    0, 0,    0,    0,    0, 0,
+        0xCC, 0x40, 0x0B, 0,    0,    0,    0, 0, // Feb 29, 2020
+        0x1E, 0x85, 0x25, 0, 0x80, 0x1C, 0xCA, 2]; // Feb 29, 2020: 13:00:00
+    let expected = [
+        "ab",
+        "0.0001",
+        "2020-02-29",
+        "2020-02-29 13:00:00"
+    ];
+    let mut r = Record {
         i: 0,
         fields: vec![
             Box::new(CharField {
@@ -78,8 +84,8 @@ fn test_create_records() {
         ]
     };
 
-    for ref mut f in r.fields {
+    for (i, ref mut f) in r.fields.iter_mut().enumerate() {
         f.from_record_bytes();
-        println!("{}:{}", f.name(), f);
+        assert_eq!(expected[i], format!("{}", f));
     }
 }

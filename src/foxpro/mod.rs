@@ -470,7 +470,7 @@ impl<'a> FieldOps for DateTimeField<'a> {
         let time_field = &self.record[half..(self.meta.rec_offset() + self.meta.size())];
         let naive_date = NaiveDate::from_num_days_from_ce(i32::from_le_bytes(date_field.try_into().unwrap()) - 1_721_426);
         let milli_4_midnight = u32::from_le_bytes(time_field.try_into().unwrap());
-        self.content = naive_date.and_hms(milli_4_midnight / 3_600_000, milli_4_midnight / 60_000, milli_4_midnight / 1000);
+        self.content = naive_date.and_hms((milli_4_midnight / 3_600_000) % 24, (milli_4_midnight / 60_000) % 60, (milli_4_midnight / 1000) % 60);
     }
 
     fn to_bytes(&self) -> &[u8] {
