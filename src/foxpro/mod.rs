@@ -311,7 +311,7 @@ impl<'a> FieldOps for CharField<'a> {
     }
 
     fn to_bytes(&self) -> &[u8] {
-        &self.record[self.meta.rec_offset()..self.meta.size()]
+        &self.record[self.meta.rec_offset()..(self.meta.size() + self.meta.rec_offset())]
     }
 }
 
@@ -359,11 +359,59 @@ impl<'a> FieldOps for CurrencyField<'a> {
         let raw = i64::from_le_bytes(field.try_into().unwrap());
         let integer = raw / 10000;
         let fraction = raw % 10000;
-        self.content = format!("{}.{}", integer, fraction);
+        self.content = format!("{}.{:04}", integer, fraction);
     }
 
     fn to_bytes(&self) -> &[u8] {
-        &self.record[self.meta.rec_offset()..self.meta.size()]
+        &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+    }
+}
+
+pub struct DateField<'a> {
+    pub meta: Field,
+    content: NaiveDate,
+    record: &'a [u8]
+}
+
+impl<'a> FieldMeta for DateField<'a> {
+    fn nullable(&self) -> bool {
+        self.meta.nullable()
+    }
+    fn autoincrement(&self) -> bool {
+        self.meta.autoincrement()
+    }
+    fn name(&self) -> &str {
+        self.meta.name()
+    }
+    fn rec_offset(&self) -> usize {
+        self.meta.rec_offset()
+    }
+    fn size(&self) -> usize {
+        self.meta.size()
+    }
+    fn precision(&self) -> usize {
+        self.meta.precision()
+    }
+    fn next_id(&mut self) -> u32 {
+        self.meta.next_id()
+    }
+}
+
+impl<'a> Display for DateField<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.content)
+    }
+}
+
+impl<'a> FieldOps for DateField<'a> {
+
+    fn from_record_bytes(&mut self) {
+        let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
+        self.content = NaiveDate::from_num_days_from_ce(i64::from_le_bytes(field.try_into().unwrap()) as i32);
+    }
+
+    fn to_bytes(&self) -> &[u8] {
+        &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
     }
 }
 
