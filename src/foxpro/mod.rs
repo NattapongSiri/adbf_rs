@@ -167,7 +167,7 @@ pub fn cp_mapper(codepage: u8) -> Result<&'static str, &'static str> {
         121 => Ok("cp949"),
         122 => Ok("cp936"),
         123 => Ok("cp932"),
-        124 => Ok("tis-620"),
+        124 => Ok("tis620"),
         125 => Ok("cp1255"),
         126 => Ok("cp1256"),
         150 => Ok("cp10007"),
@@ -296,8 +296,7 @@ impl<'a> Display for CharField<'a> {
 impl<'a> FieldOps for CharField<'a> {
 
     fn from_record_bytes(&mut self) {
-        let field = &self.record[self.meta.rec_offset()..self.meta.size()];
-        println!("{:?}", field);
+        let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
         let (reason, readed, _) = get_decoder(self.codepage).decode_to_string(field, &mut self.content, true);
         if readed != self.meta.size() {
             match reason {
@@ -355,7 +354,8 @@ impl<'a> Display for CurrencyField<'a> {
 impl<'a> FieldOps for CurrencyField<'a> {
 
     fn from_record_bytes(&mut self) {
-        let field = &self.record[self.meta.rec_offset()..self.meta.size()];
+        let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
+        
         let raw = i64::from_le_bytes(field.try_into().unwrap());
         let integer = raw / 10000;
         let fraction = raw % 10000;

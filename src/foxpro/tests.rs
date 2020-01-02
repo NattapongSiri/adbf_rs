@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_create_records() {
-    let record = &[b'A', 0, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    let record = &[b'a', b'b', 1u8, 0, 0, 0, 0, 0, 0, 0];
     println!("{:?}", record);
     let mut r = Record {
         i: 0,
@@ -21,7 +21,7 @@ fn test_create_records() {
                     system: None
                 },
                 codepage: "tis-620",
-                content: String::new(),
+                content: String::with_capacity(2 * 4),
                 record: record
             }),
             Box::new(CurrencyField {
@@ -31,13 +31,13 @@ fn test_create_records() {
                     name: "Just a money field".to_owned(),
                     next_id: 0u32,
                     nullable: None,
-                    offset: 0,
+                    offset: 2,
                     precision: 0,
-                    size: 2,
+                    size: 8,
                     step: 1u32,
                     system: None
                 },
-                content: String::new(),
+                content: String::with_capacity(256),
                 record: record
             })
         ]
