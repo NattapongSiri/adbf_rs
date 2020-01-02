@@ -4,8 +4,9 @@ use super::*;
 fn test_create_records() {
     let record = &[
         b'a', b'b', 
-        1u8, 0, 0, 0, 0, 0, 0, 0,
-        2u8, 0, 0, 0, 0, 0, 0, 0];
+        1u8, 0, 0,   0, 0,   0, 0, 0,
+        2u8, 0, 0,   0, 0,   0, 0, 0,
+          0, 0, 0, 3u8, 0, 8u8, 0, 0];
     let r = Record {
         i: 0,
         fields: vec![
@@ -56,6 +57,22 @@ fn test_create_records() {
                     system: None
                 },
                 content: NaiveDate::from_num_days_from_ce(0),
+                record: record
+            }),
+            Box::new(DateTimeField {
+                meta: Field {
+                    autoincrement: None,
+                    binary: None,
+                    name: "Just a date_time field".to_owned(),
+                    next_id: 0u32,
+                    nullable: None,
+                    offset: 18,
+                    precision: 0,
+                    size: 8,
+                    step: 1u32,
+                    system: None
+                },
+                content: NaiveDate::from_num_days_from_ce(0).and_hms(0, 0, 0),
                 record: record
             })
         ]

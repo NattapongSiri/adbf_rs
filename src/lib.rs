@@ -1,4 +1,7 @@
-use chrono::naive::NaiveDate;
+use chrono::naive::{
+    NaiveDate,
+    NaiveDateTime
+};
 use encoding_rs::{Encoder, Encoding, Decoder};
 use futures::stream::Stream;
 use std::{

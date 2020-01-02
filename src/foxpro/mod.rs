@@ -1,14 +1,12 @@
 use core::fmt::Display;
 use encoding_rs::{Decoder, Encoding};
 use std::fmt;
-use futures::stream::{Stream};
 use std::{
     convert::TryInto, 
     fs::File, 
     io::{
         Read, Seek, SeekFrom
     }, 
-    ops::Index
 };
 
 use super::*;
@@ -408,6 +406,58 @@ impl<'a> FieldOps for DateField<'a> {
     fn from_record_bytes(&mut self) {
         let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
         self.content = NaiveDate::from_num_days_from_ce(i64::from_le_bytes(field.try_into().unwrap()) as i32);
+    }
+
+    fn to_bytes(&self) -> &[u8] {
+        &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+    }
+}
+
+pub struct DateTimeField<'a> {
+    pub meta: Field,
+    content: NaiveDateTime,
+    record: &'a [u8]
+}
+
+impl<'a> FieldMeta for DateTimeField<'a> {
+    fn nullable(&self) -> bool {
+        self.meta.nullable()
+    }
+    fn autoincrement(&self) -> bool {
+        self.meta.autoincrement()
+    }
+    fn name(&self) -> &str {
+        self.meta.name()
+    }
+    fn rec_offset(&self) -> usize {
+        self.meta.rec_offset()
+    }
+    fn size(&self) -> usize {
+        self.meta.size()
+    }
+    fn precision(&self) -> usize {
+        self.meta.precision()
+    }
+    fn next_id(&mut self) -> u32 {
+        self.meta.next_id()
+    }
+}
+
+impl<'a> Display for DateTimeField<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.content)
+    }
+}
+
+impl<'a> FieldOps for DateTimeField<'a> {
+
+    fn from_record_bytes(&mut self) {
+        let half : usize = self.meta.rec_offset() + self.meta.size() / 2;
+        let date_field = &self.record[self.meta.rec_offset()..half];
+        let time_field = &self.record[half..(self.meta.rec_offset() + self.meta.size())];
+        let naive_date = NaiveDate::from_num_days_from_ce(i32::from_le_bytes(date_field.try_into().unwrap()) - 1_721_426);
+        let milli_4_midnight = u32::from_le_bytes(time_field.try_into().unwrap());
+        self.content = naive_date.and_hms(milli_4_midnight / 3_600_000, milli_4_midnight / 60_000, milli_4_midnight / 1000);
     }
 
     fn to_bytes(&self) -> &[u8] {
