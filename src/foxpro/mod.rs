@@ -306,23 +306,27 @@ impl<'a> Display for CharField<'a> {
 
 impl<'a> FieldOps for CharField<'a> {
 
-    fn from_record_bytes(&mut self) {
-        let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
-        let (reason, readed, _) = get_decoder(self.codepage).decode_to_string(field, &mut self.content, true);
-        if readed != self.meta.size() {
-            match reason {
-                InputEmpty => {
-                    panic!("Insufficient record data. Expect {} but found {}", self.meta.size(), readed)
-                },
-                OutputFull => {
-                    panic!("Insufficient buffer to store converted string")
+    fn from_record_bytes(&mut self) -> BoxFuture<()> {
+        Box::pin(lazy(move |_| {
+            let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
+            let (reason, readed, _) = get_decoder(self.codepage).decode_to_string(field, &mut self.content, true);
+            if readed != self.meta.size() {
+                match reason {
+                    InputEmpty => {
+                        panic!("Insufficient record data. Expect {} but found {}", self.meta.size(), readed)
+                    },
+                    OutputFull => {
+                        panic!("Insufficient buffer to store converted string")
+                    }
                 }
             }
-        }
+        }))
     }
 
-    fn to_bytes(&self) -> &[u8] {
-        &self.record[self.meta.rec_offset()..(self.meta.size() + self.meta.rec_offset())]
+    fn to_bytes(&self) -> BoxFuture<&[u8]> {
+        Box::pin(
+            lazy(move |_| &self.record[self.meta.rec_offset()..(self.meta.size() + self.meta.rec_offset())])
+        )
     }
 }
 
@@ -364,17 +368,21 @@ impl<'a> Display for CurrencyField<'a> {
 
 impl<'a> FieldOps for CurrencyField<'a> {
 
-    fn from_record_bytes(&mut self) {
-        let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
-        
-        let raw = i64::from_le_bytes(field.try_into().unwrap());
-        let integer = raw / 10000;
-        let fraction = raw % 10000;
-        self.content = format!("{}.{:04}", integer, fraction);
+    fn from_record_bytes(&mut self) -> BoxFuture<()> {
+        Box::pin(lazy(move |_| {
+            let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
+            
+            let raw = i64::from_le_bytes(field.try_into().unwrap());
+            let integer = raw / 10000;
+            let fraction = raw % 10000;
+            self.content = format!("{}.{:04}", integer, fraction);
+        }))
     }
 
-    fn to_bytes(&self) -> &[u8] {
-        &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+    fn to_bytes(&self) -> BoxFuture<&[u8]> {
+        Box::pin(lazy(move |_|
+            &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+        ))
     }
 }
 
@@ -416,13 +424,17 @@ impl<'a> Display for DateField<'a> {
 
 impl<'a> FieldOps for DateField<'a> {
 
-    fn from_record_bytes(&mut self) {
-        let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
-        self.content = NaiveDate::from_num_days_from_ce(i64::from_le_bytes(field.try_into().unwrap()) as i32);
+    fn from_record_bytes(&mut self) -> BoxFuture<()> {
+        Box::pin(lazy(move |_| {
+            let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
+            self.content = NaiveDate::from_num_days_from_ce(i64::from_le_bytes(field.try_into().unwrap()) as i32);
+        }))
     }
 
-    fn to_bytes(&self) -> &[u8] {
-        &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+    fn to_bytes(&self) -> BoxFuture<&[u8]> {
+        Box::pin(lazy(move |_|
+            &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+        ))
     }
 }
 
@@ -464,17 +476,21 @@ impl<'a> Display for DateTimeField<'a> {
 
 impl<'a> FieldOps for DateTimeField<'a> {
 
-    fn from_record_bytes(&mut self) {
-        let half : usize = self.meta.rec_offset() + self.meta.size() / 2;
-        let date_field = &self.record[self.meta.rec_offset()..half];
-        let time_field = &self.record[half..(self.meta.rec_offset() + self.meta.size())];
-        let naive_date = NaiveDate::from_num_days_from_ce(i32::from_le_bytes(date_field.try_into().unwrap()) - 1_721_426);
-        let milli_4_midnight = u32::from_le_bytes(time_field.try_into().unwrap());
-        self.content = naive_date.and_hms((milli_4_midnight / 3_600_000) % 24, (milli_4_midnight / 60_000) % 60, (milli_4_midnight / 1000) % 60);
+    fn from_record_bytes(&mut self) -> BoxFuture<()> {
+        Box::pin(lazy(move |_| {
+            let half : usize = self.meta.rec_offset() + self.meta.size() / 2;
+            let date_field = &self.record[self.meta.rec_offset()..half];
+            let time_field = &self.record[half..(self.meta.rec_offset() + self.meta.size())];
+            let naive_date = NaiveDate::from_num_days_from_ce(i32::from_le_bytes(date_field.try_into().unwrap()) - 1_721_426);
+            let milli_4_midnight = u32::from_le_bytes(time_field.try_into().unwrap());
+            self.content = naive_date.and_hms((milli_4_midnight / 3_600_000) % 24, (milli_4_midnight / 60_000) % 60, (milli_4_midnight / 1000) % 60);
+        }))
     }
 
-    fn to_bytes(&self) -> &[u8] {
-        &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+    fn to_bytes(&self) -> BoxFuture<&[u8]> {
+        Box::pin(lazy(move |_| {
+            &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+        }))
     }
 }
 
@@ -482,3 +498,15 @@ pub struct Record {
     i: usize,
     fields: Vec<Box<dyn FieldOps>>
 }
+
+// impl Stream for Record {
+//     type Item=Box<dyn FieldOps>;
+
+//     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        
+//     }
+// }
+
+// impl<T> RecordOps<T> for Record where T: FieldOps {
+
+// }

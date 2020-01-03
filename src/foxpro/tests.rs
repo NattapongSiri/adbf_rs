@@ -1,4 +1,5 @@
 use super::*;
+use futures::executor::block_on;
 
 #[test]
 fn test_create_records() {
@@ -84,8 +85,10 @@ fn test_create_records() {
         ]
     };
 
-    for (i, ref mut f) in r.fields.iter_mut().enumerate() {
-        f.from_record_bytes();
-        assert_eq!(expected[i], format!("{}", f));
+    for (i, f) in r.fields.iter_mut().enumerate() {
+        block_on(async {
+            f.from_record_bytes().await;
+            assert_eq!(expected[i], format!("{}", f));
+        });
     }
 }

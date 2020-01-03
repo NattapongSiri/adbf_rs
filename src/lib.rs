@@ -3,14 +3,26 @@ use chrono::naive::{
     NaiveDateTime
 };
 use encoding_rs::{Encoder, Encoding, Decoder};
-use futures::stream::Stream;
+use futures::{
+    future::{
+        BoxFuture,
+        Future,
+        lazy
+    },
+    stream::Stream,
+    task::{
+        Context,
+        Poll
+    }
+};
 use std::{
     fmt::{
         Display
     },
     fs::File,
     io::Read,
-    ops::Index
+    ops::Index,
+    pin::Pin
 };
 
 #[cfg(test)]
@@ -125,15 +137,15 @@ pub trait FieldMeta {
 /// Operation conversion from/to bytes into field
 pub trait FieldOps : FieldMeta + Display {
     /// Parse bytes based on current meta data and update the state
-    fn from_record_bytes(&mut self);
+    fn from_record_bytes(&mut self) -> BoxFuture<()>;
     /// Return bytes represent by this field.
     /// The result is a byte slice with length equals to size stored in meta data.
-    fn to_bytes(&self) -> &[u8];
+    fn to_bytes(&self) -> BoxFuture<&[u8]>;
 }
 
 /// Record standard operation.
 /// It can be indexed to access each field.
-/// It can be iterated to read each field in this record.
+/// It can be iterated to read each field in this record in streaming fashion.
 pub trait RecordOps<T>: 
     Stream<Item=Vec<T>> + 
     Index<usize, Output=Vec<T>>
@@ -143,6 +155,8 @@ where T: FieldOps + FieldMeta
 }
 
 /// Standard table operation.
+/// It can be indexed to access each record.
+/// It can be iterated to read each record in streaming fashion.
 pub trait TableOps<F> : RecordOps<F> where F: FieldOps + FieldMeta {
     fn join<V>(&self, other: impl TableOps<F>, condition: impl Fn(&[F], &[F]) -> Option<Vec<F>>) -> V where V: TableOps<F>;
     fn select<V>(&self, condition: impl Fn(&[F]) -> Option<Vec<F>>) -> V where V: TableOps<F>;
