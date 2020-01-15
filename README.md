@@ -1,4 +1,5 @@
 # adbf_rs
+![build status](https://travis-ci.org/NattapongSiri/adbf_rs.svg?branch=master)
 ## WIP
 The long term goal of this project is to provide an ability to read/write dbf file in asynchronous fashion using Rust.
 
