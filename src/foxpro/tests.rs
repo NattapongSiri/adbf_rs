@@ -1,4 +1,5 @@
 use super::*;
+
 use futures::executor::block_on;
 
 #[test]
@@ -14,78 +15,79 @@ fn test_create_records() {
         "2020-02-29",
         "2020-02-29 13:00:00"
     ];
-    let mut r = Record {
-        i: 0,
-        fields: vec![
-            Box::new(CharField {
-                meta: Field {
-                    autoincrement: None,
-                    binary: None,
-                    name: "Just a char field".to_owned(),
-                    next_id: 0u32,
-                    nullable: None,
-                    offset: 0,
-                    precision: 0,
-                    size: 2,
-                    step: 1u32,
-                    system: None
-                },
-                codepage: "tis-620",
-                content: String::with_capacity(2 * 4),
-                record: record
-            }),
-            Box::new(CurrencyField {
-                meta: Field {
-                    autoincrement: None,
-                    binary: None,
-                    name: "Just a money field".to_owned(),
-                    next_id: 0u32,
-                    nullable: None,
-                    offset: 2,
-                    precision: 0,
-                    size: 8,
-                    step: 1u32,
-                    system: None
-                },
-                content: String::with_capacity(256),
-                record: record
-            }),
-            Box::new(DateField {
-                meta: Field {
-                    autoincrement: None,
-                    binary: None,
-                    name: "Just a date field".to_owned(),
-                    next_id: 0u32,
-                    nullable: None,
-                    offset: 10,
-                    precision: 0,
-                    size: 8,
-                    step: 1u32,
-                    system: None
-                },
-                content: NaiveDate::from_num_days_from_ce(0),
-                record: record
-            }),
-            Box::new(DateTimeField {
-                meta: Field {
-                    autoincrement: None,
-                    binary: None,
-                    name: "Just a date_time field".to_owned(),
-                    next_id: 0u32,
-                    nullable: None,
-                    offset: 18,
-                    precision: 0,
-                    size: 8,
-                    step: 1u32,
-                    system: None
-                },
-                content: NaiveDate::from_num_days_from_ce(0).and_hms(0, 0, 0),
-                record: record
-            })
-        ]
-    };
+    let mut r = Record(vec![
+        Box::new(CharField {
+            meta: Field {
+                autoincrement: None,
+                binary: None,
+                name: "Just a char field".to_owned(),
+                next_id: 0u32,
+                nullable: None,
+                offset: 0,
+                precision: 0,
+                size: 2,
+                step: 1u32,
+                system: None
+            },
+            codepage: "tis-620",
+            content: String::with_capacity(2 * 4),
+            ready: None,
+            record: record
+        }),
+        Box::new(CurrencyField {
+            meta: Field {
+                autoincrement: None,
+                binary: None,
+                name: "Just a money field".to_owned(),
+                next_id: 0u32,
+                nullable: None,
+                offset: 2,
+                precision: 0,
+                size: 8,
+                step: 1u32,
+                system: None
+            },
+            content: String::with_capacity(256),
+            ready: None,
+            record: record
+        }),
+        Box::new(DateField {
+            meta: Field {
+                autoincrement: None,
+                binary: None,
+                name: "Just a date field".to_owned(),
+                next_id: 0u32,
+                nullable: None,
+                offset: 10,
+                precision: 0,
+                size: 8,
+                step: 1u32,
+                system: None
+            },
+            content: NaiveDate::from_num_days_from_ce(0),
+            ready: None,
+            record: record
+        }),
+        Box::new(DateTimeField {
+            meta: Field {
+                autoincrement: None,
+                binary: None,
+                name: "Just a date_time field".to_owned(),
+                next_id: 0u32,
+                nullable: None,
+                offset: 18,
+                precision: 0,
+                size: 8,
+                step: 1u32,
+                system: None
+            },
+            content: NaiveDate::from_num_days_from_ce(0).and_hms(0, 0, 0),
+            ready: None,
+            record: record
+        })
+    ]);
 
-    for (i, f) in r.fields.iter_mut().enumerate() {
+    for (i, f) in r.iter_mut().enumerate() {
         block_on(async {
             f.from_record_bytes().await;
             assert_eq!(expected[i], format!("{}", f));

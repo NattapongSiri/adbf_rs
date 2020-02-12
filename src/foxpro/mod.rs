@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use core::fmt::Display;
 use encoding_rs::{Decoder, Encoding};
 use std::fmt;
@@ -7,6 +8,9 @@ use std::{
     io::{
         Read, Seek, SeekFrom
     }, 
+    task::{
+        Waker
+    }
 };
 
 use super::*;
@@ -14,27 +18,9 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
-/// Read header from given file.
+
+/// Read field meta data from dbf file.
 /// 
-/// According to this [link](http://www.dbfree.org/webdocs/1-documentation/b-dbf_header_specifications.htm)
-/// (The link is healthy as of 2019-12-30)
-/// ## Header 
-/// ---
-/// | Byte Offset | Description |
-/// | --- | --- |
-/// | 0 | DBF File type: <br/>0x02 FoxBASE<br/> 0x03 FoxBASE+/Dbase III plus, no memo<br/> 0x30   Visual FoxPro<br/> 0x31   Visual FoxPro, autoincrement enabled<br/> 0x32   Visual FoxPro with field type Varchar or Varbinary<br/>0x43   dBASE IV SQL table files, no memo<br/>0x63   dBASE IV SQL system files, no memo<br/>0x83   FoxBASE+/dBASE III PLUS, with memo<br/>0x8B   dBASE IV with memo<br/>0xCB   dBASE IV SQL table files, with memo<br/>0xF5   FoxPro 2.x (or earlier) with memo<br/>0xE5   HiPer-Six format with SMT memo file<br/>0xFB   FoxBASE |
-/// | 1 - 3 | Last update (YYMMDD) |
-/// | 4 - 7 | Number of records in file |
-/// | 8 - 9 | Position of first data record |
-/// | 10 - 11 | Length of one data record, including delete flag |
-/// | 12 - 27 | Reserved |
-/// | 28 | Table flags: <br/>0x01 file has structural .cdx<br/>0x02 file has a Memo field<br/>0x04 file is a database (.dbc)<br/>This byte can contain the sum of above value. For example 0x03 = 0x01 + 0x02 |
-/// | 29 | Code page mark |
-/// | 30 - 31 | Reserved, must be all 0 |
-/// | 32 - n | Field subrecords <br/>The number of fields determines the number of field subrecords. One field subrecord exist for each field in the table |
-/// | n + 1 | Header record terminator, must be 0x0D |
-/// | n + 2 to n + 264 | VFP only. A 263-byte range that contains the backlink, which is relative path of an associated database (.dbc) file, information. If the first byte is 0x00, the file is not associated with a database. Thus database files always have 0x00. |
-/// ---
 /// ## Field Subrecords Structure
 /// ---
 /// | Byte offset | Description |
@@ -48,25 +34,6 @@ mod tests;
 /// | 19 - 22 | Value of next autoincrement |
 /// | 23 | Value of autoincrement step |
 /// | 24 - 31 | Reserved |
-pub async fn read_header(f: &mut File) -> std::io::Result<Header> {
-    let common = &mut [0; 32];
-    f.read_exact(common)?;
-    
-    Ok(Header {
-        db_type: DBFType::parse_type(common[0]),
-        last_update: NaiveDate::from_ymd(common[1] as i32, common[2] as u32, common[3] as u32),
-        records_count: u32::from_le_bytes(common[4..8].try_into().unwrap()) as usize,
-        first_record_position: u16::from_le_bytes(common[8..10].try_into().unwrap()) as usize,
-        record_len: u16::from_le_bytes(common[10..=11].try_into().unwrap()) as usize,
-        table_flag: common[28],
-        codepage: match cp_mapper(common[29]) {
-            Ok(cp) => cp,
-            Err(msg) => panic!(msg)
-        }
-    })
-}
-
-/// Read field meta data from dbf file.
 pub async fn read_fields(f: &mut File, h: &Header) -> Vec<Field> {
     f.seek(SeekFrom::Start(33)).expect("Fail to move file cursor to fields meta data");
     let mut buffer = [0u8;32];
@@ -96,21 +63,22 @@ fn read_field_meta(bytes: [u8; 32], decoder: &mut Decoder) -> Option<Field> {
     let (reason, readed, _) = decoder.decode_to_string(&bytes[0..10], &mut field_name, false);
     if readed != 10 {
         match reason {
-            InputEmpty => {
+            CoderResult::InputEmpty => {
                 panic!("Fail to read field name from meta data")
             },
-            OutputFull => {
+            CoderResult::OutputFull => {
                 panic!("Insufficient field name length allocated. Please file a defect report.")
             }
         }
     }
-    let flag = match std::str::from_utf8(&bytes[11..12]) {
-        Ok(s) => s,
-        Err(err) => {
-            panic!(err)
-        }
-    };
-    let field_type = FieldType::from_flag(&flag).unwrap();
+    let datatype = bytes[11];
+    // let flag = match std::str::from_utf8(&bytes[11..12]) {
+    //     Ok(s) => s,
+    //     Err(err) => {
+    //         panic!(err)
+    //     }
+    // };
+    // let field_type = FieldType::from_flag(&flag).unwrap();
     let offset = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
     let size = bytes[16] as usize;
     let precision = bytes[17] as usize;
@@ -123,6 +91,7 @@ fn read_field_meta(bytes: [u8; 32], decoder: &mut Decoder) -> Option<Field> {
 
     Some(Field {
         name: field_name,
+        datatype: datatype,
         offset: offset,
         size: size,
         precision: precision,
@@ -179,6 +148,7 @@ pub fn cp_mapper(codepage: u8) -> Result<&'static str, &'static str> {
     }
 }
 
+#[derive(Clone)]
 pub enum FieldType {
     /// Fixed length character data type
     Character,
@@ -222,6 +192,7 @@ impl FieldType {
             'I' => Ok(FieldType::Integer),
             'L' => Ok(FieldType::Logical),
             'M' => Ok(FieldType::Memo),
+            'N' => Ok(FieldType::Float),
             'P' => Ok(FieldType::Picture),
             'Q' => Ok(FieldType::Varbinary),
             'V' => Ok(FieldType::Varchar),
@@ -230,8 +201,10 @@ impl FieldType {
     }
 }
 
+#[derive(Clone)]
 pub struct Field {
     pub name: String,
+    pub datatype: u8,
     pub offset: usize,
     pub size: usize,
     pub precision: usize,
@@ -250,6 +223,9 @@ impl FieldMeta for Field {
     fn autoincrement(&self) -> bool {
         self.autoincrement.is_some()
     }
+    fn datatype_flag(&self) -> u8 {
+        self.datatype
+    }
     fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -267,10 +243,58 @@ impl FieldMeta for Field {
     }
 }
 
+pub struct RawCharField {
+    bytes: Vec<u8>,
+    encoding: String
+}
+
+impl ConversionField<String> for RawCharField {
+    fn get(&self) -> String {
+        let mut value = String::with_capacity(self.bytes.len());
+        let (coderesult, size, _) = get_decoder(self.encoding.as_str()).decode_to_string(&self.bytes, &mut value, false);
+
+        if size != self.bytes.len() {
+            match coderesult {
+                CoderResult::InputEmpty => {
+                    panic!("Insufficient input to read or input is emptied");
+                },
+                CoderResult::OutputFull => {
+                    panic!("Insufficient output buffer for filling");
+                }
+            }
+        }
+        value.truncate(size);
+
+        value
+    }
+
+    fn set(&mut self, value: &String) {
+        // Just in case for DBCS
+        self.bytes = Vec::with_capacity(value.len() * 2);
+        unsafe {
+            self.bytes.set_len(value.len());
+        }
+        let (result, read, write, _) = get_encoder(self.encoding.as_str()).encode_from_utf8(value, self.bytes.as_mut_slice(), false);
+        if read != value.len() {
+            match result {
+                CoderResult::InputEmpty => {
+                    panic!("Insufficient input to filed buffer or input is emptied");
+                },
+                CoderResult::OutputFull => {
+                    panic!("Insufficient buffered output allocated");
+                }
+            }
+        }
+        self.bytes.truncate(write);
+    }
+}
+
+#[derive(Clone)]
 pub struct CharField<'a> {
     pub meta: Field,
     content: String,
     codepage: &'a str,
+    ready: Option<()>,
     record: &'a [u8]
 }
 
@@ -280,6 +304,9 @@ impl<'a> FieldMeta for CharField<'a> {
     }
     fn autoincrement(&self) -> bool {
         self.meta.autoincrement()
+    }
+    fn datatype_flag(&self) -> u8 {
+        b'C'
     }
     fn name(&self) -> &str {
         self.meta.name()
@@ -307,38 +334,63 @@ impl<'a> Display for CharField<'a> {
 impl<'a> FieldOps for CharField<'a> {
 
     fn from_record_bytes(&mut self) -> BoxFuture<()> {
-        Box::pin(lazy(move |_| {
+        Box::pin(async move {
             let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
             let (reason, readed, _) = get_decoder(self.codepage).decode_to_string(field, &mut self.content, true);
             if readed != self.meta.size() {
                 match reason {
-                    InputEmpty => {
+                    CoderResult::InputEmpty => {
                         panic!("Insufficient record data. Expect {} but found {}", self.meta.size(), readed)
                     },
-                    OutputFull => {
+                    CoderResult::OutputFull => {
                         panic!("Insufficient buffer to store converted string")
                     }
                 }
             }
-        }))
+        })
     }
 
     fn to_bytes(&self) -> BoxFuture<&[u8]> {
         Box::pin(
-            lazy(move |_| &self.record[self.meta.rec_offset()..(self.meta.size() + self.meta.rec_offset())])
+            async move {
+                &self.record[self.meta.rec_offset()..(self.meta.size() + self.meta.rec_offset())]
+            }
         )
+    }
+
+    fn ready(&self) -> bool {
+        self.ready.is_some()
     }
 }
 
+pub struct RawCurrencyField {
+    bytes: Vec<u8>
+}
+
+impl ConversionField<f64> for RawCurrencyField {
+    fn get(&self) -> f64 {
+        (i64::from_le_bytes(self.bytes.as_slice().try_into().expect("Fail to convert to currency")) as f64) / 10000f64
+    }
+
+    fn set(&mut self, value: &f64) {
+        self.bytes = (&value.to_le_bytes()).to_vec();
+    }
+}
+
+#[derive(Clone)]
 pub struct CurrencyField<'a> {
     pub meta: Field,
     content: String,
+    ready: Option<()>,
     record: &'a [u8]
 }
 
 impl<'a> FieldMeta for CurrencyField<'a> {
     fn nullable(&self) -> bool {
         self.meta.nullable()
+    }
+    fn datatype_flag(&self) -> u8 {
+        b'Y'
     }
     fn autoincrement(&self) -> bool {
         self.meta.autoincrement()
@@ -369,32 +421,57 @@ impl<'a> Display for CurrencyField<'a> {
 impl<'a> FieldOps for CurrencyField<'a> {
 
     fn from_record_bytes(&mut self) -> BoxFuture<()> {
-        Box::pin(lazy(move |_| {
+        Box::pin(async move {
             let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
             
             let raw = i64::from_le_bytes(field.try_into().unwrap());
             let integer = raw / 10000;
             let fraction = raw % 10000;
             self.content = format!("{}.{:04}", integer, fraction);
-        }))
+        })
     }
 
     fn to_bytes(&self) -> BoxFuture<&[u8]> {
-        Box::pin(lazy(move |_|
-            &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
-        ))
+        Box::pin(
+            async move {
+                &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+            }
+        )
+    }
+
+    fn ready(&self) -> bool {
+        self.ready.is_some()
     }
 }
 
+pub struct RawDateField {
+    bytes: Vec<u8>
+}
+
+impl ConversionField<NaiveDate> for RawDateField {
+    fn get(&self) -> NaiveDate {
+        NaiveDate::from_num_days_from_ce(i64::from_le_bytes(self.bytes.as_slice().try_into().unwrap()) as i32)
+    }
+
+    fn set(&mut self, value: &NaiveDate) {
+        self.bytes = (&(value.num_days_from_ce() as i64).to_le_bytes()).to_vec();
+    }
+}
+
+#[derive(Clone)]
 pub struct DateField<'a> {
     pub meta: Field,
     content: NaiveDate,
+    ready: Option<()>,
     record: &'a [u8]
 }
 
 impl<'a> FieldMeta for DateField<'a> {
     fn nullable(&self) -> bool {
         self.meta.nullable()
+    }
+    fn datatype_flag(&self) -> u8 {
+        b'D'
     }
     fn autoincrement(&self) -> bool {
         self.meta.autoincrement()
@@ -425,21 +502,31 @@ impl<'a> Display for DateField<'a> {
 impl<'a> FieldOps for DateField<'a> {
 
     fn from_record_bytes(&mut self) -> BoxFuture<()> {
-        Box::pin(lazy(move |_| {
-            let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
-            self.content = NaiveDate::from_num_days_from_ce(i64::from_le_bytes(field.try_into().unwrap()) as i32);
-        }))
+        Box::pin(
+            async move {
+                let field = &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())];
+                self.content = NaiveDate::from_num_days_from_ce(i64::from_le_bytes(field.try_into().unwrap()) as i32);
+            }
+        )
     }
 
     fn to_bytes(&self) -> BoxFuture<&[u8]> {
-        Box::pin(lazy(move |_|
-            &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
-        ))
+        Box::pin(
+            async move {
+                &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+            }
+        )
+    }
+
+    fn ready(&self) -> bool {
+        self.ready.is_some()
     }
 }
 
+#[derive(Clone)]
 pub struct DateTimeField<'a> {
     pub meta: Field,
+    ready: Option<()>,
     content: NaiveDateTime,
     record: &'a [u8]
 }
@@ -450,6 +537,9 @@ impl<'a> FieldMeta for DateTimeField<'a> {
     }
     fn autoincrement(&self) -> bool {
         self.meta.autoincrement()
+    }
+    fn datatype_flag(&self) -> u8 {
+        b'T'
     }
     fn name(&self) -> &str {
         self.meta.name()
@@ -477,35 +567,77 @@ impl<'a> Display for DateTimeField<'a> {
 impl<'a> FieldOps for DateTimeField<'a> {
 
     fn from_record_bytes(&mut self) -> BoxFuture<()> {
-        Box::pin(lazy(move |_| {
-            let half : usize = self.meta.rec_offset() + self.meta.size() / 2;
-            let date_field = &self.record[self.meta.rec_offset()..half];
-            let time_field = &self.record[half..(self.meta.rec_offset() + self.meta.size())];
-            let naive_date = NaiveDate::from_num_days_from_ce(i32::from_le_bytes(date_field.try_into().unwrap()) - 1_721_426);
-            let milli_4_midnight = u32::from_le_bytes(time_field.try_into().unwrap());
-            self.content = naive_date.and_hms((milli_4_midnight / 3_600_000) % 24, (milli_4_midnight / 60_000) % 60, (milli_4_midnight / 1000) % 60);
-        }))
+        Box::pin(
+            async move {
+                let half : usize = self.meta.rec_offset() + self.meta.size() / 2;
+                let date_field = &self.record[self.meta.rec_offset()..half];
+                let time_field = &self.record[half..(self.meta.rec_offset() + self.meta.size())];
+                let naive_date = NaiveDate::from_num_days_from_ce(i32::from_le_bytes(date_field.try_into().unwrap()) - 1_721_426);
+                let milli_4_midnight = u32::from_le_bytes(time_field.try_into().unwrap());
+                self.content = naive_date.and_hms((milli_4_midnight / 3_600_000) % 24, (milli_4_midnight / 60_000) % 60, (milli_4_midnight / 1000) % 60);
+            }
+        )
     }
 
     fn to_bytes(&self) -> BoxFuture<&[u8]> {
-        Box::pin(lazy(move |_| {
-            &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
-        }))
+        Box::pin(
+            async move {
+                &self.record[self.meta.rec_offset()..(self.meta.rec_offset() + self.meta.size())]
+            }    
+        )
+    }
+
+    fn ready(&self) -> bool {
+        self.ready.is_some()
     }
 }
 
-pub struct Record {
-    i: usize,
-    fields: Vec<Box<dyn FieldOps>>
+/// A raw bytes that represent 32 bits float value as 20 characters or less.
+/// This field type require user to specify length of integer part and number 
+/// of precision. The length of integer and precision combined shall be less than
+/// 20 including "." symbol and "-" sign.
+/// So if this field contains only positive integer, it can have value of to 20 digits.
+/// If this field contains signed integer, the positive value can take up to 20 digits but
+/// negative value can only take up to 19 digits.
+/// If it contains decimal, the number of digits will be reduce by 1.
+/// If precision is 3, the max integer will be 16 for positive value and 15 for negative value.
+/// 
+/// Example of max number of digit:
+/// 
+/// 12345678901234567890
+/// 
+/// -1234567890123456789
+/// 
+/// 1234567890123456.123
+/// 
+/// -1234567890.12345678
+pub struct RawFloatField {
+    bytes: Vec<u8>,
+    integer: u8,
+    precision: u8
 }
 
-// impl Stream for Record {
-//     type Item=Box<dyn FieldOps>;
+impl ConversionField<f32> for RawFloatField {
+    fn get(&self) -> f32 {
+        let mut buffer = String::with_capacity(self.bytes.len());
+        let (result, readed, _) = get_decoder("ISO-8859-1").decode_to_string(self.bytes.as_slice().try_into().expect("Fail to read value from byte array"), &mut buffer, true);
+        if readed != self.bytes.len() {
+            match result {
+                CoderResult::InputEmpty => panic!("Insufficient input to read for Numeric/Float field. Please report an issue."),
+                CoderResult::OutputFull => panic!("Insufficient buffer to write for Numeric/Float field. Please report an issue.")
+            }
+        }
+        buffer.parse().expect("Fail to convert buffered string to float. Please file an issue.")
+    }
 
-//     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        
-//     }
-// }
+    fn set(&mut self, value: &f32) {
+        let buffer = format!("{0:0>0decimal$.precision$}", *value, decimal=self.integer as usize, precision=self.precision as usize);
+        self.bytes = buffer.into_bytes();
+    }
+}
+
+/// Alias of 32 bits float but represent as char on disk
+pub type RawNumericField = RawFloatField;
 
 // impl<T> RecordOps<T> for Record where T: FieldOps {
 
