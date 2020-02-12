@@ -1,4 +1,5 @@
 # adbf_rs
+![Github workflow build status](https://github.com/NattapongSiri/adbf_rs/workflows/Rust/badge.svg) ![travis build status](https://travis-ci.org/NattapongSiri/adbf_rs.svg?branch=master) ![test coverage](https://codecov.io/gh/NattapongSiri/adbf_rs/branch/master/graph/badge.svg)
 ## WIP
 The long term goal of this project is to provide an ability to read/write dbf file in asynchronous fashion using Rust.
 
