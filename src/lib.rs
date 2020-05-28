@@ -46,7 +46,7 @@ mod tests;
 
 pub mod foxpro;
 
-fn get_encoding(cp: &str) -> &'static Encoding {
+pub fn get_encoding(cp: &str) -> &'static Encoding {
     match Encoding::for_label(cp.as_bytes()) {
         Some(e) => e,
         None => {
@@ -55,12 +55,12 @@ fn get_encoding(cp: &str) -> &'static Encoding {
     }
 }
 
-fn get_decoder(cp: &str) -> Decoder {
+pub fn get_decoder(cp: &str) -> Decoder {
     let encoding = get_encoding(cp);
     encoding.new_decoder()
 }
 
-fn get_encoder(cp: &str) -> Encoder {
+pub fn get_encoder(cp: &str) -> Encoder {
     let encoding = get_encoding(cp);
     encoding.new_encoder()
 }
@@ -139,6 +139,23 @@ impl DBFType {
     }
 }
 
+pub enum DataType {
+    Character,
+    Currency,
+    Float,
+    General,
+    Date,
+    DateTime,
+    Double,
+    Integer,
+    Logical,
+    Memo,
+    Number,
+    Picture,
+    Varchar,
+    Varbin
+}
+
 /// Field metadata.
 pub trait FieldMeta {
     /// A field is nullable
@@ -177,6 +194,77 @@ pub trait FieldOps : FieldMeta + Display + Send {
     fn to_bytes(&self) -> BoxFuture<&[u8]>;
     /// Return true if the field is ready to be read
     fn ready(&self) -> bool;
+}
+
+pub trait RawSize {
+    // return size in bytes of raw data that required to be properly
+    // parsed into it own data type.
+    fn size() -> usize;
+}
+
+pub struct TableFile<R> where R: Read {
+    f: std::sync::Mutex<R>
+}
+
+pub struct RecordFuture<R, T> where R: std::io::Read, T: RawSize {
+    raw: std::sync::Mutex<R>,
+    first_record_offset: u64,
+    value: Option<T>,
+    waker: Option<core::task::Waker>
+}
+
+impl<R, T> RecordFuture<R, T> where R: std::io::Read + std::io::Seek, T: RawSize + RecordOps {
+    pub fn new(source: R, first_record_offset: u64) -> RecordFuture<R, T> {
+        RecordFuture {
+            raw: std::sync::Mutex::new(source),
+            first_record_offset,
+            value: None,
+            waker: None
+        }
+    }
+}
+
+impl<R, T> Future for Box<RecordFuture<R, T>> where R: std::io::Read + std::io::Seek, T: RawSize + Clone + RecordOps {
+    type Output=T;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context) -> Poll<T> {
+        if let Some(ref v) = self.value {
+            Poll::Ready(v.clone())
+        } else {
+            let offset = self.first_record_offset;
+            let mut buffer: Vec<u8> = Vec::with_capacity(T::size());
+            unsafe {buffer.set_len(T::size());}
+            let mut value = None;
+
+            match self.raw.try_lock() {
+                std::sync::TryLockResult::Err(_) => (),
+                std::sync::TryLockResult::Ok(mut locked_file) => {
+                    locked_file.seek(std::io::SeekFrom::Start(offset)).unwrap();
+                    let mut total_read = 0;
+                    loop {
+                        if let Ok(readed) = locked_file.read(&mut buffer[total_read..]) {
+                            total_read = total_read + readed;
+
+                            if total_read == buffer.len() {
+                                break;
+                            }
+                        } else {
+                            panic!("Fail to fill buffer using source IO")
+                        }
+                    }
+                    value = Some(T::from_bytes(&buffer));
+                }
+            }
+            
+            if let Some(v) = value {
+                self.value = Some(v.clone());
+                Poll::Ready(v)
+            } else {
+                self.waker = Some(context.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
 }
 
 /// Type wrapper to wrap trait object inside Vec.
@@ -434,6 +522,50 @@ pub trait DynamicRecordOps: RecordOps {
     #[allow(unused)]
     fn set_datetime(&mut self, i: usize, value: &NaiveDateTime) {
         unimplemented!("Operation not support")
+    }
+}
+
+/// Table indexing operation similar to Index trait but return any kind of
+/// smart pointer instead of borrowed value.
+/// 
+/// There's only one required function, [get](trait.TableIndex.html#method.get)
+pub trait TableIndex {
+    type Item: Deref;
+
+    /// Get value at current index. For a straigth forward implementation like
+    /// `InMemoryTable`, it delegate indexing to inner `Vec` then return Boxed value.
+    /// 
+    /// For lazy or defered table, it can be `std::cell::Ref`, `std::sync::RwReadLockGuard`, etc.
+    /// depending on whether the implementation need what kind of read/write safety.
+    /// The lazy table need to mut inner buffer. That is to load the record from disk then store it in buffer.
+    /// 
+    /// The reason that it signature doesn't have &mut self is because most of the time, it
+    /// doesn't alter the buffer. When it does, it will need some kind of runtime guarantee as
+    /// data loading and data accessing may be done in different thread to prevent app freezing while
+    /// doing IO ops.
+    fn get(&self, index: usize) -> Self::Item;
+}
+
+/// Table mutable indexing operation similar to IndexMut trait but it return any kind of
+/// smart pointer instead of borrowed value.
+/// 
+/// There's only one required function, [get](trait.TableIndex.html#method.get_mut)
+pub trait TableIndexMut<T> {
+    type Item: DerefMut<Target = T>;
+
+    /// Get mutable value at current index. 
+    /// 
+    /// It can be `std::cell::Ref`, `std::sync::RwReadLockGuard`, etc.
+    /// depending on whether the implementation need what kind of read/write safety.
+    /// 
+    /// This is typically done using interior mutability. It is impossible to do it with
+    /// `InMemoryTable` as it doesn't offer interior mutability.
+    fn get_mut(&mut self, index: usize) -> Self::Item;
+
+    /// Utility function that allow user to set value instead of getting a 
+    /// `DerefMut` instance, just to assign a value.
+    fn set(&mut self, index: usize, value: T) {
+        *self.get_mut(index) = value
     }
 }
 

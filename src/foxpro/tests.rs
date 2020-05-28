@@ -20,6 +20,7 @@ fn test_create_records() {
             meta: Field {
                 autoincrement: None,
                 binary: None,
+                datatype: b'C',
                 name: "Just a char field".to_owned(),
                 next_id: 0u32,
                 nullable: None,
@@ -38,6 +39,7 @@ fn test_create_records() {
             meta: Field {
                 autoincrement: None,
                 binary: None,
+                datatype: b'B',
                 name: "Just a money field".to_owned(),
                 next_id: 0u32,
                 nullable: None,
@@ -55,6 +57,7 @@ fn test_create_records() {
             meta: Field {
                 autoincrement: None,
                 binary: None,
+                datatype: b'D',
                 name: "Just a date field".to_owned(),
                 next_id: 0u32,
                 nullable: None,
@@ -72,6 +75,7 @@ fn test_create_records() {
             meta: Field {
                 autoincrement: None,
                 binary: None,
+                datatype: b'T',
                 name: "Just a date_time field".to_owned(),
                 next_id: 0u32,
                 nullable: None,

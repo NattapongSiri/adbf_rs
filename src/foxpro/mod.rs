@@ -1,4 +1,4 @@
-use chrono::Datelike;
+use chrono::{Datelike, Timelike};
 use core::fmt::Display;
 use encoding_rs::{Decoder, Encoding};
 use std::fmt;
@@ -7,9 +7,6 @@ use std::{
     fs::File, 
     io::{
         Read, Seek, SeekFrom
-    }, 
-    task::{
-        Waker
     }
 };
 
@@ -18,6 +15,10 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
+type MemReferer<T> = Box<T>;
+
+#[cfg(features = "threaded")]
+type MemReferer<T> = Arc<T>;
 
 /// Read field meta data from dbf file.
 /// 
@@ -243,8 +244,9 @@ impl FieldMeta for Field {
     }
 }
 
+#[derive(Clone)]
 pub struct RawCharField {
-    bytes: Vec<u8>,
+    bytes: MemReferer<[u8]>,
     encoding: String
 }
 
@@ -270,11 +272,11 @@ impl ConversionField<String> for RawCharField {
 
     fn set(&mut self, value: &String) {
         // Just in case for DBCS
-        self.bytes = Vec::with_capacity(value.len() * 2);
+        let mut bytes = Vec::with_capacity(value.len() * 2);
         unsafe {
-            self.bytes.set_len(value.len());
+            bytes.set_len(value.len());
         }
-        let (result, read, write, _) = get_encoder(self.encoding.as_str()).encode_from_utf8(value, self.bytes.as_mut_slice(), false);
+        let (result, read, write, _) = get_encoder(self.encoding.as_str()).encode_from_utf8(value, bytes.as_mut_slice(), false);
         if read != value.len() {
             match result {
                 CoderResult::InputEmpty => {
@@ -285,7 +287,8 @@ impl ConversionField<String> for RawCharField {
                 }
             }
         }
-        self.bytes.truncate(write);
+        bytes.truncate(write);
+        self.bytes = bytes.into_boxed_slice();
     }
 }
 
@@ -363,17 +366,18 @@ impl<'a> FieldOps for CharField<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct RawCurrencyField {
-    bytes: Vec<u8>
+    bytes: MemReferer<[u8]>
 }
 
 impl ConversionField<f64> for RawCurrencyField {
     fn get(&self) -> f64 {
-        (i64::from_le_bytes(self.bytes.as_slice().try_into().expect("Fail to convert to currency")) as f64) / 10000f64
+        (i64::from_le_bytes((&*self.bytes).try_into().expect("Fail to convert to currency")) as f64) / 10_000f64
     }
 
     fn set(&mut self, value: &f64) {
-        self.bytes = (&value.to_le_bytes()).to_vec();
+        self.bytes = Box::from((value * 10_000f64).to_le_bytes());
     }
 }
 
@@ -444,17 +448,78 @@ impl<'a> FieldOps for CurrencyField<'a> {
     }
 }
 
+#[derive(Clone)]
+pub struct RawDoubleField {
+    bytes: MemReferer<[u8]>
+}
+
+impl ConversionField<f64> for RawDoubleField {
+    fn get(&self) -> f64 {
+        f64::from_le_bytes((&*self.bytes).try_into().unwrap())
+    }
+
+    fn set(&mut self, value: &f64) {
+        self.bytes = Box::from(value.to_le_bytes());
+    }
+}
+
+#[derive(Clone)]
+pub struct RawGeneralField {
+    bytes: MemReferer<[u8]>
+}
+
+impl ConversionField<u32> for RawGeneralField {
+    fn get(&self) -> u32 {
+        u32::from_le_bytes((&*self.bytes).try_into().unwrap())
+    }
+
+    fn set(&mut self, value: &u32) {
+        self.bytes = Box::from(value.to_le_bytes());
+    }
+}
+
+#[derive(Clone)]
+pub struct RawIntegerField {
+    bytes: MemReferer<[u8]>
+}
+
+impl ConversionField<i32> for RawIntegerField {
+    fn get(&self) -> i32 {
+        i32::from_le_bytes((&*self.bytes).try_into().unwrap())
+    }
+
+    fn set(&mut self, value: &i32) {
+        self.bytes = Box::from(value.to_le_bytes());
+    }
+}
+
+#[derive(Clone)]
+pub struct RawBoolField {
+    byte: u8
+}
+
+impl ConversionField<bool> for RawBoolField {
+    fn get(&self) -> bool {
+        self.byte != 0
+    }
+
+    fn set(&mut self, value: &bool) {
+        self.byte = *value as u8
+    }
+}
+
+#[derive(Clone)]
 pub struct RawDateField {
-    bytes: Vec<u8>
+    bytes: MemReferer<[u8]>
 }
 
 impl ConversionField<NaiveDate> for RawDateField {
     fn get(&self) -> NaiveDate {
-        NaiveDate::from_num_days_from_ce(i64::from_le_bytes(self.bytes.as_slice().try_into().unwrap()) as i32)
+        NaiveDate::from_num_days_from_ce(i32::from_le_bytes(self.bytes[0..4].try_into().unwrap()))
     }
 
     fn set(&mut self, value: &NaiveDate) {
-        self.bytes = (&(value.num_days_from_ce() as i64).to_le_bytes()).to_vec();
+        self.bytes = Box::from((value.num_days_from_ce() as i64).to_le_bytes());
     }
 }
 
@@ -520,6 +585,26 @@ impl<'a> FieldOps for DateField<'a> {
 
     fn ready(&self) -> bool {
         self.ready.is_some()
+    }
+}
+
+#[derive(Clone)]
+pub struct RawDateTimeField {
+    bytes: MemReferer<[u8]>
+}
+
+impl ConversionField<NaiveDateTime> for RawDateTimeField {
+    fn get(&self) -> NaiveDateTime {
+        let date_part = NaiveDate::from_num_days_from_ce(i64::from_le_bytes(self.bytes[0..4].try_into().unwrap()) as i32);
+        let time_part = u32::from_le_bytes(self.bytes[4..8].try_into().unwrap());
+        date_part.and_hms((time_part / 3_600_000) % 24, (time_part / 60_000) % 60, (time_part / 1000) % 60)
+    }
+
+    fn set(&mut self, value: &NaiveDateTime) {
+        let mut bytes = (&(value.num_days_from_ce() as u32).to_le_bytes()).to_vec();
+        let time_part = value.nanosecond() / 1_000;
+        bytes.extend(&time_part.to_le_bytes());
+        self.bytes = bytes.into_boxed_slice();
     }
 }
 
@@ -611,8 +696,9 @@ impl<'a> FieldOps for DateTimeField<'a> {
 /// 1234567890123456.123
 /// 
 /// -1234567890.12345678
+#[derive(Clone)]
 pub struct RawFloatField {
-    bytes: Vec<u8>,
+    bytes: MemReferer<[u8]>,
     integer: u8,
     precision: u8
 }
@@ -620,7 +706,7 @@ pub struct RawFloatField {
 impl ConversionField<f32> for RawFloatField {
     fn get(&self) -> f32 {
         let mut buffer = String::with_capacity(self.bytes.len());
-        let (result, readed, _) = get_decoder("ISO-8859-1").decode_to_string(self.bytes.as_slice().try_into().expect("Fail to read value from byte array"), &mut buffer, true);
+        let (result, readed, _) = get_decoder("ISO-8859-1").decode_to_string((&*self.bytes).try_into().expect("Fail to read value from byte array"), &mut buffer, true);
         if readed != self.bytes.len() {
             match result {
                 CoderResult::InputEmpty => panic!("Insufficient input to read for Numeric/Float field. Please report an issue."),
@@ -632,13 +718,104 @@ impl ConversionField<f32> for RawFloatField {
 
     fn set(&mut self, value: &f32) {
         let buffer = format!("{0:0>0decimal$.precision$}", *value, decimal=self.integer as usize, precision=self.precision as usize);
-        self.bytes = buffer.into_bytes();
+
+        let mut bytes = Vec::with_capacity(buffer.len());
+        unsafe {
+            bytes.set_len(buffer.len());
+        }
+        let (result, read, write, _) = get_encoder("ISO-8859-1").encode_from_utf8(&buffer, bytes.as_mut_slice(), false);
+        if read != buffer.len() {
+            match result {
+                CoderResult::InputEmpty => {
+                    panic!("Insufficient input to filed buffer or input is emptied");
+                },
+                CoderResult::OutputFull => {
+                    panic!("Insufficient buffered output allocated");
+                }
+            }
+        }
+        bytes.truncate(write);
+        self.bytes = bytes.into_boxed_slice();
     }
 }
 
 /// Alias of 32 bits float but represent as char on disk
 pub type RawNumericField = RawFloatField;
 
+#[derive(Clone)]
+pub struct RawVarCharField {
+    bytes: MemReferer<[u8]>,
+    encoding: String,
+    max_length: usize
+}
+
+impl ConversionField<String> for RawVarCharField {
+    fn get(&self) -> String {
+        let mut value = String::with_capacity(self.bytes.len());
+        let (coderesult, size, _) = get_decoder(self.encoding.as_str()).decode_to_string(&*self.bytes, &mut value, false);
+
+        if size != self.bytes.len() {
+            match coderesult {
+                CoderResult::InputEmpty => {
+                    panic!("Insufficient input to read or input is emptied");
+                },
+                CoderResult::OutputFull => {
+                    panic!("Insufficient output buffer for filling");
+                }
+            }
+        }
+        value.truncate(size);
+
+        value
+    }
+
+    fn set(&mut self, value: &String) {
+        // Just in case for DBCS
+        let mut bytes = Vec::with_capacity(value.len() * 2);
+        unsafe {
+            // This is safe and cheapest way to initialize byte vec that will be truncated to the content later.
+            bytes.set_len(value.len());
+        }
+        let (result, read, write, _) = get_encoder(self.encoding.as_str()).encode_from_utf8(value, bytes.as_mut_slice(), false);
+        if read != value.len() {
+            match result {
+                CoderResult::InputEmpty => {
+                    panic!("Insufficient input to filed buffer or input is emptied");
+                },
+                CoderResult::OutputFull => {
+                    panic!("Insufficient buffered output allocated");
+                }
+            }
+        }
+        bytes.truncate(write);
+
+        if bytes.len() > self.max_length {
+            panic!("Total bytes of value is {} bytes but the field max length is {} bytes.", bytes.len(), self.max_length)
+        } else {
+            self.bytes = bytes.into_boxed_slice();
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct RawVarBinField {
+    bytes: MemReferer<[u8]>,
+    max_length: usize
+}
+
+impl<'a> RawVarBinField {
+    pub fn get(&'a self) -> &'a [u8] {
+        return &self.bytes
+    }
+
+    pub fn set(&mut self, value: &[u8]) {
+        if value.len() > self.max_length {
+            panic!("Given value is {} bytes where max length is {} bytes", value.len(), self.max_length)
+        } else {
+            self.bytes = Box::from(value)
+        }
+    }
+}
 // impl<T> RecordOps<T> for Record where T: FieldOps {
 
 // }
